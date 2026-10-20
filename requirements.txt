@@ -1,0 +1,6 @@
+# Python dependencies for GTA Modding Studio and its Audio Preparation / drag-drop workflow.
+# Tkinter is part of the standard Windows Python installer (select Tcl/Tk during setup).
+numpy>=1.24
+numba>=0.59
+tkinterdnd2>=0.4.2
+Pillow>=10.0.0
