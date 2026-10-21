@@ -31,6 +31,10 @@ if errorlevel 1 goto :failed
 if errorlevel 1 goto :failed
 %PYTHON_CMD% Test_Audio_Targets_v0.3.34.py
 if errorlevel 1 goto :failed
+%PYTHON_CMD% Test_Radio_Volume_Boost.py
+if errorlevel 1 goto :failed
+%PYTHON_CMD% Test_GUI_Radio_Gain.py
+if errorlevel 1 goto :failed
 %PYTHON_CMD% -m unittest -v Test_VCS_Dual_Mono_Regression
 if errorlevel 1 goto :failed
 %PYTHON_CMD% Test_AT3_Validation_v0.3.26.py

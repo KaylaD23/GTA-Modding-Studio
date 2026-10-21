@@ -641,7 +641,7 @@ def sys_byteorder_big() -> bool:
 def convert_audio_to_ps2_payload(source: Path, output_raw: Path, ffmpeg: str,
                                  sample_rate: int = 24000,
                                  progress: Optional[Callable[[str], None]] = None,
-                                 cancel_event=None) -> dict:
+                                 cancel_event=None, gain_db: float = 0.0) -> dict:
     """Decode/resample via FFmpeg, then quickly encode PS2 SPU ADPCM."""
     if not source.is_file():
         raise AudioEncodeError(f"Source audio does not exist: {source}")
@@ -656,14 +656,22 @@ def convert_audio_to_ps2_payload(source: Path, output_raw: Path, ffmpeg: str,
         raise AudioEncodeError(f"Unsupported target sample rate: {sample_rate} Hz.")
     if np is None or njit is None:
         raise AudioEncodeError("NumPy and Numba are required for fast encoding. Run Install_Dependencies.bat first.")
+    # Apply gain to decoded PCM BEFORE PSX/SPU ADPCM encoding. Multiplying ADPCM
+    # bytes or nibbles directly corrupts its predictors and cannot apply dB.
+    import math
+    gain_db = float(gain_db)
+    if not math.isfinite(gain_db) or gain_db < 0.0 or gain_db > 12.0:
+        raise AudioEncodeError('Volume gain must be between 0 and +12 dB.')
     output_raw.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="saatps2_encode_") as td:
         pcm_path = Path(td) / "normalized_pcm.wav"
         cmd = [
             exe, "-hide_banner", "-loglevel", "error", "-y", "-i", str(source),
             "-map", "0:a:0", "-vn", "-sn", "-dn", "-ac", "2", "-ar", str(sample_rate),
-            "-sample_fmt", "s16", "-c:a", "pcm_s16le", "-f", "wav", str(pcm_path),
         ]
+        if gain_db:
+            cmd.extend(["-af", f"volume={gain_db:.3f}dB"])
+        cmd.extend(["-sample_fmt", "s16", "-c:a", "pcm_s16le", "-f", "wav", str(pcm_path)])
         if progress:
             progress("Decoding/resampling with FFmpeg")
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
@@ -688,6 +696,7 @@ def convert_audio_to_ps2_payload(source: Path, output_raw: Path, ffmpeg: str,
         meta = encode_pcm_wav_to_ps2_payload(pcm_path, output_raw, sample_rate, progress, cancel_event)
     meta["source"] = str(source)
     meta["encoded_file"] = str(output_raw)
+    meta["gain_db"] = gain_db
     return meta
 
 def wrap_vagp(payload_path: Path, output_vag: Path, sample_rate: int = 24000) -> None:

@@ -18,6 +18,7 @@ import Game_Code_Analysis as game_code_analysis
 import PSP_EBOOT_Lab
 import TIM2_Converter as tim2_converter
 import Audio_Preparation_Profiles as audio_profiles
+import Radio_Volume_Boost as radio_volume
 from asset_inspector import parse_rw_chunks
 from texture_ui import TextureTabMixin
 from texture_actions import TextureActionsMixin
@@ -29,7 +30,7 @@ except ImportError:
     _TkBase = tk.Tk
     DND_AVAILABLE = False
 
-APP_TITLE = 'GTA Modding Studio v0.3.39 — Radio & Texture Workbench'
+APP_TITLE = 'GTA Modding Studio v0.3.40 — Radio & Texture Workbench'
 BG='#111827'; PANEL='#1f2937'; PANEL2='#263244'; FG='#e5edf7'; MUTED='#a8b5c7'; ACCENT='#3b82f6'; BORDER='#374151'
 
 def human(n):
@@ -130,6 +131,9 @@ class Studio(TextureActionsMixin, TextureTabMixin, _TkBase):
         self.game_choice=tk.StringVar(value=iso_patcher.GAME_RADIO_PROFILES['gta_sa_ps2']['title']); self.station_choice=tk.StringVar(); self.direct_radio_source=tk.StringVar(); self.direct_target_text=tk.StringVar(); self.direct_format_text=tk.StringVar(); self.direct_notes_text=tk.StringVar()
         self.pak=tk.StringVar(); self.lookup=tk.StringVar(); self.group=tk.StringVar(value='Auto-detect'); self.offset_unit=tk.StringVar(value='Auto-detect'); self.size_unit=tk.StringVar(value='Auto-detect')
         self.extract_dir=tk.StringVar(); self.out_dir=tk.StringVar(); self.ffmpeg=tk.StringVar(value=audio.find_ffmpeg() or '')
+        self.radio_gain_enabled=tk.BooleanVar(value=False)
+        self.audio_gain_enabled=tk.BooleanVar(value=False)
+        self.gain_db=tk.StringVar(value='3.0')
         self.gxt_doc=None; self.gxt_path=None; self.gxt_visible=[]; self.txd_data=None; self.txd_chunks=[]; self.dtz_raw=None; self.dtz_path=None
         self._menu(); self._ui(); self.after(100,self._poll)
     def _style(self):
@@ -195,7 +199,7 @@ class Studio(TextureActionsMixin, TextureTabMixin, _TkBase):
             messagebox.showerror("LCS PS2 Length Trace", str(exc), parent=self)
 
     def _ui(self):
-        head=ttk.Frame(self,padding=(18,12,18,8)); head.pack(fill='x'); ttk.Label(head,text='GTA Modding Studio',style='Header.TLabel').pack(side='left'); ttk.Label(head,text='Native modding workbench · v0.3.39',style='Muted.TLabel').pack(side='left',padx=16)
+        head=ttk.Frame(self,padding=(18,12,18,8)); head.pack(fill='x'); ttk.Label(head,text='GTA Modding Studio',style='Header.TLabel').pack(side='left'); ttk.Label(head,text='Native modding workbench · v0.3.40',style='Muted.TLabel').pack(side='left',padx=16)
         self.status=tk.StringVar(value='Ready — open a game asset or radio archive.'); ttk.Label(self,textvariable=self.status,anchor='w',padding=(12,5),style='Muted.TLabel').pack(side='bottom',fill='x')
         self.tabs=ttk.Notebook(self); self.tabs.pack(fill='both',expand=True,padx=14,pady=(0,10))
         self.radio=ttk.Frame(self.tabs,padding=12); self.audio_tab=ttk.Frame(self.tabs,padding=12); self.txd_tab=ttk.Frame(self.tabs,padding=12); self.gxt_tab=ttk.Frame(self.tabs,padding=12); self.dtz_tab=ttk.Frame(self.tabs,padding=12); self.tim2_tab=ttk.Frame(self.tabs,padding=12)
@@ -218,6 +222,14 @@ class Studio(TextureActionsMixin, TextureTabMixin, _TkBase):
         self.station_combo.bind('<<ComboboxSelected>>',self._on_station_choice_changed)
         self.radio_context_label=tk.StringVar(value='GTA San Andreas PS2 uses a PAK + TRAKLKUP.DAT radio archive.')
         ttk.Label(station_row,textvariable=self.radio_context_label,style='Muted.TLabel',wraplength=620).pack(side='left',fill='x',expand=True)
+        volume_row=ttk.Frame(selector); volume_row.pack(fill='x',pady=(6,0))
+        ttk.Checkbutton(volume_row,text='Boost replacement audio during encoding',variable=self.radio_gain_enabled).pack(side='left')
+        ttk.Label(volume_row,text='Increase:').pack(side='left',padx=(18,4))
+        ttk.Spinbox(volume_row,from_=0.5,to=12.0,increment=0.5,textvariable=self.gain_db,width=7).pack(side='left')
+        ttk.Label(volume_row,text='dB').pack(side='left',padx=(3,12))
+        ttk.Button(volume_row,text='Apply dB to prepared VB / extracted PAK tracks…',
+                   command=self.boost_prepared_radio).pack(side='left')
+        ttk.Label(volume_row,text='(PS2 only; no backups)',style='Muted.TLabel').pack(side='left',padx=9)
 
         self.sa_controls=ttk.Frame(self.radio)
         self.sa_controls.pack(fill='both',expand=True)
@@ -442,6 +454,12 @@ class Studio(TextureActionsMixin, TextureTabMixin, _TkBase):
         ttk.Label(stationrow,text='PS2 VB station name (optional):').pack(side='left')
         ttk.Entry(stationrow,textvariable=self.audio_ps2_station,width=19).pack(side='left',padx=6)
         ttk.Label(stationrow,text='CHAT (III), KCHAT / POLICE / VCPR (VC) use 16 kHz; otherwise 32 kHz.',style='Muted.TLabel').pack(side='left')
+        gainrow=ttk.Frame(self.audio_tab);gainrow.pack(fill='x',pady=4)
+        ttk.Checkbutton(gainrow,text='Increase PS2 VB volume during conversion',variable=self.audio_gain_enabled).pack(side='left')
+        ttk.Label(gainrow,text='Gain (shared):').pack(side='left',padx=(12,4))
+        ttk.Spinbox(gainrow,from_=0.5,to=12.0,increment=0.5,textvariable=self.gain_db,width=7).pack(side='left')
+        ttk.Label(gainrow,text='dB · louder audio may clip',style='Muted.TLabel').pack(side='left',padx=5)
+        ttk.Button(gainrow,text='Boost existing VB file…',command=self.boost_vb_from_audio_tab).pack(side='left',padx=8)
         self.audio_ps2_rate_override=tk.StringVar(value='Auto (station-based)')
         ttk.Label(stationrow,text='Rate:').pack(side='left',padx=(12,0))
         ttk.Combobox(stationrow,textvariable=self.audio_ps2_rate_override,state='readonly',values=['Auto (station-based)','16000 Hz','32000 Hz'],width=23).pack(side='left',padx=4)
@@ -717,6 +735,38 @@ class Studio(TextureActionsMixin, TextureTabMixin, _TkBase):
                 elif kind=='audio_row':
                     iid=payload['iid']; self.audio_tree.set(iid,'state',payload['state'])
                 elif kind=='audio_progress': self.audio_progress['value']=max(0,min(100,float(payload))); self.audio_pct.set(f'{float(payload):.0f}%')
+                elif kind=='volume_progress':
+                    fraction,description=payload
+                    self.status.set(f'Applying dB boost: {description} ({fraction*100:.0f}%)')
+                    if self._selected_game_profile()[1]['mode']=='sa_pak':
+                        self.radio_progress['value']=fraction*100
+                        self.radio_progress_pct.set(f'{fraction*100:.0f}%')
+                elif kind=='volume_done':
+                    self.busy=False
+                    if payload['mode']=='vb':
+                        game_id,chosen=self._selected_game_profile()
+                        if (chosen['mode']=='direct' and chosen['platform']=='PS2' and
+                                chosen['asset_extension'].lower()=='.vb'):
+                            self.direct_radio_source.set(payload['output'])
+                        info=payload['result']
+                        messagebox.showinfo('VB boost complete',
+                            f'Boosted VB ready for ISO patching: {payload["output"]}\n'
+                            f'Gain: +{payload["gain"]:g} dB; size: {info["bytes"]:,} bytes (unchanged)\n'
+                            f'Clipped decoded samples: {info["clipped_pcm_samples"]:,}.\n'
+                            'Source file preserved. Verify audio quality and playback in PCSX2.')
+                        self.status.set('Boosted VB copy ready; use it in the matching PS2 station profile.')
+                    else:
+                        ok=payload['successes'];bad=payload['failures']
+                        self.radio_progress_text.set(f'Boosted {len(ok)} tracks; {len(bad)} failed. Rebuild Archive to save PAK.')
+                        text=f'Boosted {len(ok)} type-4 extracted track(s) by +{payload["gain"]:g} dB.\n'
+                        text+=f'Clipped decoded samples: {sum(n for _,n in ok):,}.\n'
+                        text+='Rebuild Archive to create the patched PAK and lookup table.\n'
+                        if bad: text+='\nFailures (unchanged):\n'+'\n'.join(f'entry {i:04d}: {reason[:150]}' for i,reason in bad[:10])
+                        (messagebox.showwarning if bad else messagebox.showinfo)('PAK boost result',text)
+                        self.status.set(f'PAK volume boost: {len(ok)} successful, {len(bad)} failed.')
+                elif kind=='volume_error':
+                    self.busy=False;self.status.set('Radio volume boost failed.')
+                    messagebox.showerror('Radio volume boost',str(payload))
                 elif kind=='audio_done':
                     self.busy=False; self.status.set(payload); messagebox.showinfo('Audio conversion',payload)
                 elif kind=='replace_done':
@@ -800,6 +850,137 @@ class Studio(TextureActionsMixin, TextureTabMixin, _TkBase):
                 elif kind=='audio_error': self.busy=False; messagebox.showerror('Audio conversion failed',payload); self.status.set('Audio conversion failed.')
         except queue.Empty: pass
         self.after(100,self._poll)
+    @staticmethod
+    def _read_db(value):
+        return radio_volume.validated_gain(value)
+
+    def _conversion_gain(self, checkbox):
+        return self._read_db(self.gain_db.get()) if checkbox.get() else 0.0
+
+    def boost_vb_from_audio_tab(self):
+        """Allow any prepared PS2 VB, even research-gated installer profiles."""
+        if self.busy:
+            messagebox.showinfo('Volume boost','Finish the current operation first.');return
+        try:
+            db=self._read_db(self.gain_db.get())
+            source=filedialog.askopenfilename(title='Choose a finished PS2 radio VB to boost',
+                filetypes=[('PS2 radio VB','*.VB'),('All files','*.*')])
+            if source:
+                self._start_boost_vb(Path(source),db)
+        except Exception as exc:
+            messagebox.showerror('VB volume boost',str(exc))
+
+    def _start_boost_vb(self,src,db):
+        src=Path(src)
+        if not src.is_file():
+            raise FileNotFoundError(src)
+        name=f'{src.stem}_plus{db:g}dB.VB'
+        output=filedialog.asksaveasfilename(title='Save NEW boosted VB (source preserved)',
+            defaultextension='.VB',initialdir=str(src.parent),initialfile=name,
+            filetypes=[('PS2 VB','*.VB'),('All files','*.*')])
+        if not output:return
+        dst=Path(output)
+        if dst.resolve()==src.resolve():
+            raise ValueError('The boosted VB must have a different filename from its source.')
+        if dst.exists():
+            raise FileExistsError(f'Choose a NEW output path: {dst}')
+        if not messagebox.askyesno('Confirm VB volume boost',
+            f'Boost {src.name} by +{db:g} dB?\n\nOutput: {dst}\n\n'
+            'The source VB will remain unchanged. The audio will be decoded and re-encoded '
+            'as PS2 ADPCM, preserving the original 0x2000-channel interleave and byte size. '
+            'Repeated boosts compound gain and may introduce clipping.'):
+            return
+        self.busy=True
+        def worker():
+            last=[-1]
+            def publish(fraction):
+                pct=int(100*fraction)
+                if pct!=last[0]:
+                    last[0]=pct
+                    self.q.put(('volume_progress',(fraction,'VB')))
+            try:
+                result=radio_volume.boost_vb(src,dst,db,progress=publish)
+                self.q.put(('volume_done',{'mode':'vb','gain':db,'result':result,'output':str(dst)}))
+            except Exception as exc:
+                self.q.put(('volume_error',str(exc)))
+        threading.Thread(target=worker,daemon=True).start()
+
+    def boost_prepared_radio(self):
+        """Gain a selected prepared VB or extracted SA type-4 PAK entries.
+
+        Raw compressed bytes are never arithmetically scaled. Worker re-encodes
+        decoded samples at the same ADPCM frame count, then revalidates.
+        """
+        if self.busy:
+            messagebox.showinfo('Volume boost','Finish the current operation first.');return
+        try:
+            db=self._read_db(self.gain_db.get())
+            game_id,profile=self._selected_game_profile()
+            if profile['mode']=='sa_pak':
+                folder=Path(self.extract_dir.get().strip()) if self.extract_dir.get().strip() else None
+                if not folder or not folder.is_dir():
+                    raise ValueError('Extract the radio PAK first; the booster operates on extracted type-4 entries, then you Rebuild Archive.')
+                source_pak,source_lookup,g,o,z=self._radio_args()
+                manifest_path=folder/'manifest.json'
+                if not manifest_path.is_file():
+                    raise ValueError('Extracted tracks manifest is missing; extract this PAK using the Studio first.')
+                manifest=json.loads(manifest_path.read_text(encoding='utf-8'))
+                if (Path(manifest['source_pak']).resolve()!=source_pak.resolve() or
+                    Path(manifest['source_lookup']).resolve()!=source_lookup.resolve()):
+                    raise ValueError('The extracted tracks do not match the currently selected PAK/lookup pair.')
+                selected={int(iid) for iid in self.radio_tree.selection()}
+                tracks=manifest.get('tracks',[])
+                if selected:
+                    chosen=[tr for tr in tracks if tr['table_record'] in selected]
+                    if len(chosen)!=len(selected):
+                        raise ValueError('Selected tracks are not in the extraction manifest. Re-inspect and re-extract.')
+                    if any(not tr.get('has_stream_header') for tr in chosen):
+                        raise ValueError('Only extracted GTA SA type-4 dual streams support existing-audio dB boosting. VAGp/unknown entries cannot be boosted by this button.')
+                else:
+                    chosen=[tr for tr in tracks if tr.get('has_stream_header')]
+                if not chosen:
+                    raise ValueError('No supported type-4 entries found in this extracted PAK.')
+                plans=[]
+                for item in chosen:
+                    idx=item['table_record'];path=folder/f'entry_{idx:04d}.bin';hdr=folder/f'entry_{idx:04d}.hdr'
+                    if not path.is_file() or not hdr.is_file():
+                        raise FileNotFoundError(f'Missing extracted pair for entry {idx:04d}; extract again.')
+                    plans.append((idx,path,hdr))
+                if not messagebox.askyesno('Confirm PAK volume change',
+                    f'Increase {len(plans)} extracted GTA SA PS2 type-4 track(s) by +{db:g} dB?\n\n'
+                    'This re-encodes BOTH mini and full channel streams, preserves stream sizes and headers, '
+                    'and updates the extracted working files WITHOUT creating backups.\n\n'
+                    'Afterward select Rebuild Archive to produce a NEW PAK + TRAKLKUP.DAT.\n\n'
+                    'Applying boost multiple times compounds it; loud sections may clip.'):
+                    return
+                self.busy=True
+                self.radio_progress['value']=0
+                def worker():
+                    successes=[];fails=[];total=len(plans)
+                    for i,(idx,path,hdr) in enumerate(plans):
+                        try:
+                            with tempfile.TemporaryDirectory(prefix='.gta_track_db_',dir=str(folder)) as temp:
+                                dest=Path(temp)/'boosted.bin'
+                                def update(fraction, i=i, idx=idx):
+                                    self.q.put(('volume_progress',((i+fraction)/total,f'entry {idx:04d}')))
+                                result=radio_volume.boost_gtasa_type4(path,hdr.read_bytes(),dest,db,progress=update)
+                                os.replace(dest,path)
+                            successes.append((idx,result['clipped_pcm_samples']))
+                        except Exception as exc:
+                            fails.append((idx,str(exc)))
+                        self.q.put(('volume_progress',((i+1)/total,f'Processed {i+1}/{total} entries')))
+                    self.q.put(('volume_done',{'mode':'pak','gain':db,'successes':successes,'failures':fails}))
+                threading.Thread(target=worker,daemon=True).start()
+            elif profile['mode']=='direct' and profile['platform']=='PS2' and profile['asset_extension'].lower()=='.vb':
+                src=Path(self.direct_radio_source.get().strip())
+                if not src.is_file():
+                    raise ValueError('Select a finished PS2 .VB station asset first.')
+                self._start_boost_vb(src,db)
+            else:
+                raise ValueError('Existing-file dB boosting currently supports GTA III/VC/LCS/VCS PS2 VB and GTA SA PS2 type-4 PAK tracks. PSP AT3 and unidentified formats are not supported.')
+        except Exception as exc:
+            messagebox.showerror('Volume boost',str(exc))
+
     def pick_pak(self):
         p=filedialog.askopenfilename(title='Open GTA SA radio PAK',filetypes=[('PAK archive','*.PAK'),('All files','*.*')]);
         if p: self.pak.set(p); self.status.set(f'PAK selected: {Path(p).name}')
@@ -921,16 +1102,17 @@ class Studio(TextureActionsMixin, TextureTabMixin, _TkBase):
             if not source:return
             ff=self.ffmpeg.get().strip() or shutil.which('ffmpeg')
             if not ff: raise ValueError('FFmpeg is required. Install it or choose ffmpeg.exe in Audio Preparation.')
+            gain_value=self._conversion_gain(self.radio_gain_enabled)
             self.busy=True; self.status.set(f'Preparing replacement for record {idx:04d}…')
             def worker():
                 try:
                     with tempfile.TemporaryDirectory(prefix='gta_studio_replace_') as td:
                         stage=Path(td); rate=tr.sample_rate or 24000; raw=stage/'full.adpcm'
-                        audio.convert_audio_to_ps2_payload(Path(source),raw,ff,rate)
+                        audio.convert_audio_to_ps2_payload(Path(source),raw,ff,rate,gain_db=gain_value)
                         if tr.has_stream_header:
                             hdr=folder/f'entry_{idx:04d}.hdr'
                             if not hdr.is_file(): raise ValueError(f'Missing {hdr.name}; re-extract so the original stream header is preserved.')
-                            mini=stage/'mini.adpcm'; audio.convert_audio_to_ps2_payload(Path(source),mini,ff,audio.GTASA_MINI_RATE)
+                            mini=stage/'mini.adpcm'; audio.convert_audio_to_ps2_payload(Path(source),mini,ff,audio.GTASA_MINI_RATE,gain_db=gain_value)
                             packed=stage/'packed.bin'; meta=audio.pack_gtasa_ps2_stream_payload(raw,mini,packed)
                             new_header=audio.update_gtasa_type4_stream_header(hdr.read_bytes(),meta,rate)
                             stream_check=audio.validate_gtasa_type4_stream(new_header,packed,expected_full_rate=rate)
@@ -1051,6 +1233,7 @@ class Studio(TextureActionsMixin, TextureTabMixin, _TkBase):
                       'Type-4 entries get both mini/full streams and updated stream-size/rate fields. The extracted files will be changed only after each song converts successfully; the original PAK/lookup files will not be overwritten.\n\nContinue?')
             if not messagebox.askyesno('Confirm batch replacement', prompt):
                 return
+            gain_value=self._conversion_gain(self.radio_gain_enabled)
             self.busy = True
             self.radio_progress['value'] = 0
             self.radio_progress_pct.set('0%')
@@ -1085,10 +1268,10 @@ class Studio(TextureActionsMixin, TextureTabMixin, _TkBase):
                                     put_progress(f'{label}: {message}', (stage_num + subpct) / stage_count)
                                 return callback
                             full_raw = work / 'full_rate.adpcm'
-                            audio.convert_audio_to_ps2_payload(source, full_raw, ff, rate, progress=callback_factory(0, 'Full-rate stream'))
+                            audio.convert_audio_to_ps2_payload(source, full_raw, ff, rate, progress=callback_factory(0, 'Full-rate stream'),gain_db=gain_value)
                             if tr.has_stream_header:
                                 mini_raw = work / 'mini_rate.adpcm'
-                                audio.convert_audio_to_ps2_payload(source, mini_raw, ff, audio.GTASA_MINI_RATE, progress=callback_factory(1, 'Mini stream'))
+                                audio.convert_audio_to_ps2_payload(source, mini_raw, ff, audio.GTASA_MINI_RATE, progress=callback_factory(1, 'Mini stream'),gain_db=gain_value)
                                 packed = work / 'replacement_payload.bin'
                                 meta = audio.pack_gtasa_ps2_stream_payload(full_raw, mini_raw, packed)
                                 if packed.stat().st_size != meta['packed_bytes'] or packed.stat().st_size % audio.GTASA_CHUNK_SIZE:
@@ -1453,6 +1636,12 @@ class Studio(TextureActionsMixin, TextureTabMixin, _TkBase):
         try: output_dir.mkdir(parents=True,exist_ok=True)
         except Exception as exc: messagebox.showerror('Output folder',str(exc)); return
         profile_name=self.audio_format.get();profile=audio_profiles.PROFILES[profile_name];ext=profile['ext']
+        if self.audio_gain_enabled.get() and profile['platform']!='PS2':
+            messagebox.showerror('dB boost','This PCM gain option supports PS2 VB profiles only. PSP AT3 conversion has a different encoder path.');return
+        try:
+            gain_value=self._conversion_gain(self.audio_gain_enabled)
+        except Exception as exc:
+            messagebox.showerror('dB boost',str(exc));return
         # Reserve non-colliding names up-front. Files with identical stems must never
         # overwrite one another when a mixed folder is converted as a batch.
         destinations=[]; reserved=set()
@@ -1481,7 +1670,7 @@ class Studio(TextureActionsMixin, TextureTabMixin, _TkBase):
                                 overall=100.0*(index+max(0,min(100,pct))/100.0)/total
                                 self.q.put(('audio_progress',overall))
                         ready=stage/('ready_output'+ext)
-                        result=audio_profiles.convert(src,ready,profile_name,ff,self.audio_at3tool.get().strip(),self.audio_reference_at3.get().strip(),progress=stage_progress,station_name=(self.audio_ps2_station.get().strip() or src.stem) if profile['platform']=='PS2' else '',sample_rate_override=(None if self.audio_ps2_rate_override.get().startswith('Auto') else int(self.audio_ps2_rate_override.get().split()[0])) if profile['platform']=='PS2' else None)
+                        result=audio_profiles.convert(src,ready,profile_name,ff,self.audio_at3tool.get().strip(),self.audio_reference_at3.get().strip(),progress=stage_progress,station_name=(self.audio_ps2_station.get().strip() or src.stem) if profile['platform']=='PS2' else '',sample_rate_override=(None if self.audio_ps2_rate_override.get().startswith('Auto') else int(self.audio_ps2_rate_override.get().split()[0])) if profile['platform']=='PS2' else None,gain_db=gain_value)
                         os.replace(ready,dest)
                     successes.append((dest,result))
                     rate_note = f" · {result['sample_rate']} Hz · {result['vb_estimated_duration_seconds']/60:.2f} min" if profile['platform']=='PS2' else f" · {result['duration_seconds']/60:.2f} min"
@@ -1494,7 +1683,7 @@ class Studio(TextureActionsMixin, TextureTabMixin, _TkBase):
             for dest, meta in successes:
                 if profile['platform']=='PS2':
                     layout_note = ("encoded L/R channel blocks identical (dual-mono layout)" if meta.get('encoded_channels_identical') else "encoded L/R channels contain differences (stereo layout)")
-                    lines.append(f"{dest.name}: source {meta['source_duration_seconds']:.2f}s → VB {meta['vb_estimated_duration_seconds']:.2f}s; {meta['sample_rate']} Hz, channel interleave 0x2000 (padding +{meta['padding_duration_seconds']:.2f}s); {layout_note}.")
+                    lines.append(f"{dest.name}: source {meta['source_duration_seconds']:.2f}s → VB {meta['vb_estimated_duration_seconds']:.2f}s; {meta['sample_rate']} Hz, channel interleave 0x2000 (padding +{meta['padding_duration_seconds']:.2f}s); {layout_note}; gain +{meta['gain_db']:.1f} dB.")
                 else:
                     lines.append(f"{dest.name}: ATRAC3plus, declared duration {meta['duration_seconds']:.2f}s (runtime playback not tested).")
             if failures:

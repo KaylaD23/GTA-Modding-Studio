@@ -167,7 +167,7 @@ def normalize_vb_frames(path: Path) -> dict:
     return vb.inspect_vb(path, 32000)
 
 
-def convert(source:Path, output:Path, profile_name:str, ffmpeg:str, at3tool:str='', reference_at3:str='', progress=None, station_name:str='', sample_rate_override:int|None=None)->dict:
+def convert(source:Path, output:Path, profile_name:str, ffmpeg:str, at3tool:str='', reference_at3:str='', progress=None, station_name:str='', sample_rate_override:int|None=None, gain_db:float=0.0)->dict:
     if profile_name not in PROFILES:raise ValueError('Choose one of the six supported GTA targets.')
     p=PROFILES[profile_name]; source=Path(source);output=Path(output)
     if output.resolve()==source.resolve():raise ValueError('Never overwrite the source audio file.')
@@ -184,7 +184,7 @@ def convert(source:Path, output:Path, profile_name:str, ffmpeg:str, at3tool:str=
             stage = Path(temp)
             raw = stage / 'stereo_frame_pairs.adpcm'
             packed = stage / 'radio.VB'
-            meta = ps2.convert_audio_to_ps2_payload(source, raw, ffmpeg, rate, progress=progress)
+            meta = ps2.convert_audio_to_ps2_payload(source, raw, ffmpeg, rate, progress=progress, gain_db=gain_db)
             layout = vb.repack_stereo_frames(raw, packed)
             verified = vb.inspect_vb(packed, rate)
             if packed.stat().st_size != vb.required_vb_size(meta['pcm_frames']):
@@ -195,7 +195,7 @@ def convert(source:Path, output:Path, profile_name:str, ffmpeg:str, at3tool:str=
             os.replace(packed, output)
         return {'profile':profile_name,'output':str(output),'size':output.stat().st_size,
                 'codec':p['codec'],'sample_rate':rate,'channel_interleave_bytes':vb.CHANNEL_BLOCK,
-                'source_duration_seconds':meta['duration_seconds'],
+                'source_duration_seconds':meta['duration_seconds'],'gain_db':meta['gain_db'],
                 'vb_estimated_duration_seconds':verified['estimated_seconds'],
                 'padding_duration_seconds':duration_error,
                 'encoded_channels_identical':layout['encoded_channels_identical'],
